@@ -102,25 +102,31 @@ install_system_dependencies() {
 # Node.js Installation
 # ============================================================================
 
-get_node_download_url() {
+get_node_arch() {
     local arch
     arch="$(uname -m)"
-    
+
     case "${arch}" in
-        x86_64)
-            echo "https://nodejs.org/dist/v22.18.0/node-v22.18.0-linux-x64.tar.xz"
+        x86_64|amd64|x64)
+            echo "x64"
             ;;
         aarch64|arm64)
-            echo "https://nodejs.org/dist/v22.18.0/node-v22.18.0-linux-arm64.tar.xz"
+            echo "arm64"
             ;;
         armv7l)
-            echo "https://nodejs.org/dist/v22.18.0/node-v22.18.0-linux-armv7l.tar.xz"
+            echo "armv7l"
             ;;
         *)
             log_warning "不支持的架构: ${arch}，将使用 x64"
-            echo "https://nodejs.org/dist/v22.18.0/node-v22.18.0-linux-x64.tar.xz"
+            echo "x64"
             ;;
     esac
+}
+
+get_node_download_url() {
+    local node_arch
+    node_arch="$(get_node_arch)"
+    echo "https://nodejs.org/dist/v22.18.0/node-v22.18.0-linux-${node_arch}.tar.xz"
 }
 
 install_nodejs_from_source_archive() {
@@ -128,7 +134,9 @@ install_nodejs_from_source_archive() {
 
     local install_base="$HOME/.local"
     local node_version="v22.18.0"
-    local node_dir_name="node-${node_version}-linux-$(uname -m)"
+    local node_arch
+    node_arch="$(get_node_arch)"
+    local node_dir_name="node-${node_version}-linux-${node_arch}"
     local target_dir="$install_base/${node_dir_name}"
     local node_link="$install_base/node"
     local bashrc="$HOME/.bashrc"
