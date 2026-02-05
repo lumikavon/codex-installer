@@ -539,6 +539,9 @@ main() {
 }
 
 # 支持通过管道执行（curl | bash）和直接运行
-if [ -z "${BASH_SOURCE[0]:-}" ] || [ "${BASH_SOURCE[0]}" = "$0" ]; then
+# 避免在 set -u 下读取未绑定的 BASH_SOURCE 数组元素
+if (return 0 2>/dev/null); then
+    : # sourced; do not run main
+else
     main "$@"
 fi
