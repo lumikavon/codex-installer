@@ -11,15 +11,15 @@
 ### 最简单的方式（推荐）
 
 ```bash
-export HTTP_PROXY=http://172.27.0.11:7890
+export HTTP_PROXY=http://172.27.0.1:7890
 export HTTPS_PROXY=$HTTP_PROXY
-curl -fsSL https://raw.githubusercontent.com/lumikavon/codex-installer/main/codex.install.sh | bash -s -- --api-key <your-openai-api-key>
+curl -fsSL https://raw.githubusercontent.com/lumikavon/codex-installer/refs/heads/main/codex.install.sh | bash -s -- --api-key <your-openai-api-key>
 ```
 
 或者使用 `wget`：
 
 ```bash
-wget -qO- https://raw.githubusercontent.com/lumikavon/codex-installer/main/codex.install.sh | bash -s -- --api-key <your-openai-api-key>
+wget -qO- https://raw.githubusercontent.com/lumikavon/codex-installer/refs/heads/main/codex.install.sh | bash -s -- --api-key <your-openai-api-key>
 ```
 
 **完成后，运行：**
@@ -66,14 +66,14 @@ codex -V
 ### 方式 1：直接执行（推荐）
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lumikavon/codex-installer/main/codex.install.sh | bash -s -- [OPTIONS]
+curl -fsSL https://raw.githubusercontent.com/lumikavon/codex-installer/refs/heads/main/codex.install.sh | bash -s -- [OPTIONS]
 ```
 
 ### 方式 2：下载后本地执行
 
 ```bash
 # 下载脚本
-curl -fsSL -o codex.install.sh https://raw.githubusercontent.com/lumikavon/codex-installer/main/codex.install.sh
+curl -fsSL -o codex.install.sh https://raw.githubusercontent.com/lumikavon/codex-installer/refs/heads/main/codex.install.sh
 
 # 赋予执行权限
 chmod +x codex.install.sh
@@ -110,23 +110,23 @@ chmod +x codex.install.sh
 
 **使用 API Key 参数：**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lumikavon/codex-installer/main/codex.install.sh | bash -s -- --api-key sk-proj-xxx
+curl -fsSL https://raw.githubusercontent.com/lumikavon/codex-installer/refs/heads/main/codex.install.sh | bash -s -- --api-key sk-proj-xxx
 ```
 
 **使用环境变量：**
 ```bash
 export OPENAI_API_KEY=sk-proj-xxx
-curl -fsSL https://raw.githubusercontent.com/lumikavon/codex-installer/main/codex.install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/lumikavon/codex-installer/refs/heads/main/codex.install.sh | bash
 ```
 
 **跳过 Node.js 安装（已安装过）：**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lumikavon/codex-installer/main/codex.install.sh | bash -s -- --skip-nodejs --api-key sk-proj-xxx
+curl -fsSL https://raw.githubusercontent.com/lumikavon/codex-installer/refs/heads/main/codex.install.sh | bash -s -- --skip-nodejs --api-key sk-proj-xxx
 ```
 
 **跳过 MCP Servers 配置：**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lumikavon/codex-installer/main/codex.install.sh | bash -s -- --skip-mcp --api-key sk-proj-xxx
+curl -fsSL https://raw.githubusercontent.com/lumikavon/codex-installer/refs/heads/main/codex.install.sh | bash -s -- --skip-mcp --api-key sk-proj-xxx
 ```
 
 ---
@@ -193,12 +193,12 @@ cat ~/.codex/config.toml
 - **推荐方式 1**：使用环境变量
   ```bash
   export OPENAI_API_KEY=sk-proj-xxx
-  curl -fsSL https://raw.githubusercontent.com/lumikavon/codex-installer/main/codex.install.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/lumikavon/codex-installer/refs/heads/main/codex.install.sh | bash
   ```
 
 - **推荐方式 2**：交互式输入（使用 `-t 0` 检测 TTY）
   ```bash
-  curl -fsSL https://raw.githubusercontent.com/lumikavon/codex-installer/main/codex.install.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/lumikavon/codex-installer/refs/heads/main/codex.install.sh | bash
   # 脚本会提示输入 API Key
   ```
 
@@ -259,13 +259,13 @@ chmod +x codex.install.sh
 ping github.com
 
 # 测试能否访问脚本
-curl -I https://raw.githubusercontent.com/lumikavon/codex-installer/main/codex.install.sh
+curl -I https://raw.githubusercontent.com/lumikavon/codex-installer/refs/heads/main/codex.install.sh
 ```
 
 **备选方案**：使用代理
 ```bash
 # 使用 Proxy（如需要）
-curl -x [proxy-url] -fsSL https://raw.githubusercontent.com/lumikavon/codex-installer/main/codex.install.sh | bash -s -- --api-key <key>
+curl -x [proxy-url] -fsSL https://raw.githubusercontent.com/lumikavon/codex-installer/refs/heads/main/codex.install.sh | bash -s -- --api-key <key>
 ```
 
 ### 问题 6: MCP Server 配置失败
@@ -388,7 +388,7 @@ MIT License - 详见 [LICENSE](LICENSE) 文件
 
 | 任务 | 命令 |
 |------|------|
-| 完整安装 | `curl -fsSL https://raw.githubusercontent.com/lumikavon/codex-installer/main/codex.install.sh \| bash -s -- --api-key <key>` |
+| 完整安装 | `curl -fsSL https://raw.githubusercontent.com/lumikavon/codex-installer/refs/heads/main/codex.install.sh \| bash -s -- --api-key <key>` |
 | 仅更新 Codex | `npm install -g @openai/codex@latest` |
 | 查看 Codex 版本 | `codex -V` |
 | 查看配置 | `cat ~/.codex/config.toml` |

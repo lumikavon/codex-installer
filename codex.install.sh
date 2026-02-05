@@ -538,6 +538,7 @@ main() {
     log_success "然后在项目目录运行: codex"
 }
 
-if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+# 支持通过管道执行（curl | bash）和直接运行
+if [ -z "${BASH_SOURCE[0]:-}" ] || [ "${BASH_SOURCE[0]}" = "$0" ]; then
     main "$@"
 fi
