@@ -160,6 +160,29 @@ install_nodejs_from_source_archive() {
         rm -f "$node_tar"
     fi
 
+    # 兜底：如果目录名与预期不一致，尝试自动修正
+    if [ ! -x "$target_dir/bin/node" ]; then
+        local resolved_dir=""
+        local candidates=()
+        shopt -s nullglob
+        candidates=("$install_base/node-${node_version}-linux-"*)
+        shopt -u nullglob
+        for candidate in "${candidates[@]}"; do
+            if [ -x "$candidate/bin/node" ]; then
+                resolved_dir="$candidate"
+                break
+            fi
+        done
+        if [ -n "${resolved_dir}" ]; then
+            log_warning "检测到 Node.js 目录与预期不一致，已修正为: ${resolved_dir}"
+            target_dir="$resolved_dir"
+        fi
+    fi
+
+    if [ ! -x "$target_dir/bin/node" ]; then
+        die "Node.js 安装失败：未找到 node 可执行文件（${target_dir}/bin/node）"
+    fi
+
     ln -sfn "$target_dir" "$node_link"
 
     # 配置 PATH
@@ -178,6 +201,14 @@ EOF_NODE
     # 立刻生效当前会话
     export NODE_HOME="$node_link"
     export PATH="$NODE_HOME/bin:$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+    hash -r 2>/dev/null || true
+
+    if ! command_exists node; then
+        die "Node.js 安装失败：未找到 node 命令，请检查 PATH 是否正确"
+    fi
+    if ! command_exists npm; then
+        die "Node.js 安装失败：未找到 npm 命令，请检查 PATH 是否正确"
+    fi
 
     log_info "Node 版本: $(node -v 2>/dev/null || echo 未知)"
     log_info "NPM  版本: $(npm -v 2>/dev/null || echo 未知)"
