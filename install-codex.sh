@@ -63,24 +63,46 @@ ensure_npm_user_prefix() {
   mkdir -p "${HOME}/.npm-global/bin"
   npm config set prefix "${HOME}/.npm-global" --location=user >/dev/null 2>&1 || \
     npm config set prefix "${HOME}/.npm-global" >/dev/null 2>&1 || true
+  # always ensure the npm-global bin directory is in PATH for future shells
   export PATH="${HOME}/.npm-global/bin:${PATH}"
+
+  # write a profile.d script so that login shells see it automatically
+  local profile_script="${HOME}/.profile.d/npm-global.sh"
+  mkdir -p "$(dirname "$profile_script")"
+  cat >"$profile_script" <<'EOF'
+# added by codex-installer
+export PATH="$HOME/.npm-global/bin:$PATH"
+EOF
+  chmod 644 "$profile_script" 2>/dev/null || true
+
+  # also update bashrc if present
+  if [[ -f "${HOME}/.bashrc" ]]; then
+    if ! grep -q '\.npm-global/bin' "${HOME}/.bashrc"; then
+      cat >>"${HOME}/.bashrc" <<'EOF'
+# ensure npm global bin in PATH
+export PATH="$HOME/.npm-global/bin:\$PATH"
+EOF
+    fi
+  fi
 }
 
 install_nodejs() {
   log_step "1/5 Install Node.js"
 
+  # if node is present and high enough version, we're done
   if command_exists node && command_exists npm; then
     local major
     major="$(get_node_major)"
-    if [[ -n "$major" && "$major" -ge 18 ]]; then
+    if [[ -n "$major" && "$major" -ge 24 ]]; then
       ensure_npm_user_prefix
       npm config set registry "$NPM_REGISTRY" --location=global >/dev/null 2>&1 || npm config set registry "$NPM_REGISTRY" -g >/dev/null 2>&1 || true
       log_ok "Node.js ready: $(node --version) / npm $(npm --version)"
       return 0
     fi
-    log_warn "Existing Node.js is too old: $(node --version). Need >= 18."
+    log_warn "Existing Node.js is too old: $(node --version). Need >= 24."
   fi
 
+  # try installing via package manager first (may still be old)
   local sudo_cmd=""
   if [[ "$(id -u)" -ne 0 ]] && command_exists sudo; then
     sudo_cmd="sudo"
@@ -101,8 +123,9 @@ install_nodejs() {
     log_warn "No supported package manager detected."
   fi
 
-  if ! command_exists node || ! command_exists npm || [[ "$(get_node_major)" -lt 18 ]]; then
-    log_info "Falling back to nvm for Node.js LTS"
+  # if after package manager node is still missing or <24 use nvm to install/replace
+  if ! command_exists node || ! command_exists npm || [[ "$(get_node_major)" -lt 24 ]]; then
+    log_info "Installing Node.js >=24 with nvm and replacing existing installation"
     if ! command_exists curl; then
       log_err "curl is required to install nvm."
       exit 1
@@ -115,8 +138,8 @@ install_nodejs() {
 
     # shellcheck disable=SC1090
     . "${NVM_DIR}/nvm.sh"
-    nvm install --lts
-    nvm alias default 'lts/*'
+    nvm install 24
+    nvm alias default 24
   fi
 
   if ! command_exists node || ! command_exists npm; then
@@ -124,8 +147,8 @@ install_nodejs() {
     exit 1
   fi
 
-  if [[ "$(get_node_major)" -lt 18 ]]; then
-    log_err "Node.js major version is still < 18."
+  if [[ "$(get_node_major)" -lt 24 ]]; then
+    log_err "Node.js major version is still < 24."
     exit 1
   fi
 
@@ -136,7 +159,8 @@ install_nodejs() {
 
 install_codex() {
   log_step "2/5 Install Codex"
-  npm install -g @openai/codex --registry="$NPM_REGISTRY"
+  # the package on npm is simply "codex"; earlier name was incorrect
+  npm install -g codex --registry="$NPM_REGISTRY"
 
   if command_exists codex; then
     log_ok "Codex installed: $(codex --version)"
@@ -218,22 +242,40 @@ write_codex_config() {
 
   mkdir -p "$CODEX_DIR"
 
-  node -e 'const fs=require("fs"); fs.writeFileSync(process.argv[1], JSON.stringify({OPENAI_API_KEY:process.argv[2]}, null, 2)+"\n");' \
-    "$AUTH_FILE" "$OPENAI_API_KEY"
-
-  upsert_block "$CONFIG_FILE" "$MANAGED_START" "$MANAGED_END" <<EOF
-model = "gpt-5-codex"
-model_provider = "openai"
-model_reasoning_effort = "high"
-preferred_auth_method = "apikey"
-
-[model_providers.openai]
-name = "OpenAI"
-base_url = "${OPENAI_BASE_URL}"
-env_key = "OPENAI_API_KEY"
-wire_api = "responses"
+  # write auth.json exactly as required
+  cat >"$AUTH_FILE" <<EOF
+{
+  "OPENAI_API_KEY": "${OPENAI_API_KEY}"
+}
 EOF
 
+  upsert_block "$CONFIG_FILE" "$MANAGED_START" "$MANAGED_END" <<'EOF'
+model_provider = "aicodemirror"
+model = "gpt-5.3-codex"
+model_reasoning_effort = "xhigh"
+disable_response_storage = true
+preferred_auth_method = "apikey"
+personality = "pragmatic"
+
+[model_providers.aicodemirror]
+name = "aicodemirror"
+base_url = "${OPENAI_BASE_URL}"
+wire_api = "responses"
+
+[mcp_servers.fetch]
+command = "uvx"
+args = ["mcp-server-fetch"]
+
+[mcp_servers.context7]
+command = "npx"
+args = ["-y", "@upstash/context7-mcp"]
+
+[mcp_servers.sequential-thinking]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-sequential-thinking"]
+EOF
+
+  # also regenerate convenience env script
   local escaped_key escaped_base
   escaped_key="$(escape_single "$OPENAI_API_KEY")"
   escaped_base="$(escape_single "$OPENAI_BASE_URL")"
