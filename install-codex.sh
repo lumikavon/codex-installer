@@ -255,7 +255,7 @@ write_codex_config() {
 }
 EOF
 
-  upsert_block "$CONFIG_FILE" "$MANAGED_START" "$MANAGED_END" <<'EOF'
+  cat >"$CONFIG_FILE" <<EOF
 model_provider = "aicodemirror"
 model = "gpt-5.4"
 model_reasoning_effort = "xhigh"
@@ -267,18 +267,6 @@ personality = "pragmatic"
 name = "aicodemirror"
 base_url = "${OPENAI_BASE_URL}"
 wire_api = "responses"
-
-[mcp_servers.fetch]
-command = "uvx"
-args = ["mcp-server-fetch"]
-
-[mcp_servers.context7]
-command = "npx"
-args = ["-y", "@upstash/context7-mcp"]
-
-[mcp_servers.sequential-thinking]
-command = "npx"
-args = ["-y", "@modelcontextprotocol/server-sequential-thinking"]
 EOF
 
   chmod 600 "$AUTH_FILE" "$CONFIG_FILE" 2>/dev/null || true
