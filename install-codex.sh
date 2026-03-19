@@ -60,6 +60,13 @@ get_node_major() {
 }
 
 ensure_npm_user_prefix() {
+  # When nvm is managing Node.js, do NOT set a custom prefix — nvm handles
+  # global installs itself and a conflicting prefix in ~/.npmrc breaks PATH.
+  if [[ -n "${NVM_DIR:-}" ]] && [[ -s "${NVM_DIR}/nvm.sh" ]]; then
+    log_info "nvm detected — skipping npm prefix override (nvm manages globals)"
+    return 0
+  fi
+
   mkdir -p "${HOME}/.npm-global/bin"
   npm config set prefix "${HOME}/.npm-global" --location=user >/dev/null 2>&1 || \
     npm config set prefix "${HOME}/.npm-global" >/dev/null 2>&1 || true
@@ -80,7 +87,7 @@ EOF
     if ! grep -q '\.npm-global/bin' "${HOME}/.bashrc"; then
       cat >>"${HOME}/.bashrc" <<'EOF'
 # ensure npm global bin in PATH
-export PATH="$HOME/.npm-global/bin:\$PATH"
+export PATH="$HOME/.npm-global/bin:$PATH"
 EOF
     fi
   fi
@@ -159,8 +166,7 @@ install_nodejs() {
 
 install_codex() {
   log_step "2/5 Install Codex"
-  # the package on npm is simply "codex"; earlier name was incorrect
-  npm install -g codex --registry="$NPM_REGISTRY"
+  npm install -g @openai/codex --registry="$NPM_REGISTRY"
 
   if command_exists codex; then
     log_ok "Codex installed: $(codex --version)"
