@@ -13,8 +13,6 @@ $CodexDir = Join-Path $HOME ".codex"
 $AuthFile = Join-Path $CodexDir "auth.json"
 $ConfigFile = Join-Path $CodexDir "config.toml"
 $EnvFile = Join-Path $CodexDir "env.ps1"
-$ManagedStart = "# >>> codex-installer >>>"
-$ManagedEnd = "# <<< codex-installer <<<"
 
 function Write-Step([string]$Message) {
     Write-Host "[STEP] $Message" -ForegroundColor Cyan
@@ -174,17 +172,8 @@ function Upsert-ManagedBlock {
         New-Item -ItemType Directory -Path (Split-Path -Parent $Path) -Force | Out-Null
     }
 
-    $existing = if (Test-Path $Path) { Get-Content -Path $Path -Raw } else { "" }
-    $pattern = "(?ms)^# >>> codex-installer >>>.*?# <<< codex-installer <<<\r?\n?"
-    $cleaned = [regex]::Replace($existing, $pattern, "").TrimEnd()
-
-    if ([string]::IsNullOrWhiteSpace($cleaned)) {
-        $newContent = "$ManagedStart`r`n$Payload`r`n$ManagedEnd`r`n"
-    } else {
-        $newContent = "$cleaned`r`n`r`n$ManagedStart`r`n$Payload`r`n$ManagedEnd`r`n"
-    }
-
-    Set-Content -Path $Path -Value $newContent -Encoding UTF8
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($Path, $Payload, $utf8NoBom)
 }
 
 function Write-CodexConfig {
@@ -198,7 +187,8 @@ function Write-CodexConfig {
     New-Item -ItemType Directory -Path $CodexDir -Force | Out-Null
 
     $authJson = @{ OPENAI_API_KEY = $ApiKey } | ConvertTo-Json
-    Set-Content -Path $AuthFile -Value $authJson -Encoding UTF8
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($AuthFile, $authJson, $utf8NoBom)
 
     $payload = @"
 model_provider = "aicodemirror"
