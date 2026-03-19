@@ -201,31 +201,22 @@ function Write-CodexConfig {
     Set-Content -Path $AuthFile -Value $authJson -Encoding UTF8
 
     $payload = @"
-model = "gpt-5-codex"
-model_provider = "openai"
-model_reasoning_effort = "high"
+model_provider = "aicodemirror"
+model = "gpt-5.4"
+model_reasoning_effort = "xhigh"
+disable_response_storage = true
 preferred_auth_method = "apikey"
+personality = "pragmatic"
 
-[model_providers.openai]
-name = "OpenAI"
+[model_providers.aicodemirror]
+name = "aicodemirror"
 base_url = "$BaseUrl"
-env_key = "OPENAI_API_KEY"
 wire_api = "responses"
 "@
     Upsert-ManagedBlock -Path $ConfigFile -Payload $payload.TrimEnd()
 
-    $escapedKey = Escape-SingleQuotedString $ApiKey
-    $escapedBaseUrl = Escape-SingleQuotedString $BaseUrl
-    $envPayload = @"
-`$env:OPENAI_API_KEY = '$escapedKey'
-`$env:OPENAI_BASE_URL = '$escapedBaseUrl'
-"@
-    Set-Content -Path $EnvFile -Value $envPayload -Encoding UTF8
-
-    [Environment]::SetEnvironmentVariable("OPENAI_API_KEY", $ApiKey, "User")
-    [Environment]::SetEnvironmentVariable("OPENAI_BASE_URL", $BaseUrl, "User")
-    $env:OPENAI_API_KEY = $ApiKey
-    $env:OPENAI_BASE_URL = $BaseUrl
+    # New codex version no longer requires OPENAI environment variables in script
+    if (Test-Path $EnvFile) { Remove-Item $EnvFile -Force -ErrorAction SilentlyContinue }
 
     Write-Ok "Codex config written to $CodexDir"
 }

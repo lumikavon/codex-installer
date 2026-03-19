@@ -251,7 +251,7 @@ EOF
 
   upsert_block "$CONFIG_FILE" "$MANAGED_START" "$MANAGED_END" <<'EOF'
 model_provider = "aicodemirror"
-model = "gpt-5.3-codex"
+model = "gpt-5.4"
 model_reasoning_effort = "xhigh"
 disable_response_storage = true
 preferred_auth_method = "apikey"
@@ -275,21 +275,7 @@ command = "npx"
 args = ["-y", "@modelcontextprotocol/server-sequential-thinking"]
 EOF
 
-  # also regenerate convenience env script
-  local escaped_key escaped_base
-  escaped_key="$(escape_single "$OPENAI_API_KEY")"
-  escaped_base="$(escape_single "$OPENAI_BASE_URL")"
-  cat >"$ENV_FILE" <<EOF
-#!/usr/bin/env bash
-export OPENAI_API_KEY='${escaped_key}'
-export OPENAI_BASE_URL='${escaped_base}'
-EOF
-  chmod 600 "$AUTH_FILE" "$CONFIG_FILE" "$ENV_FILE" 2>/dev/null || true
-
-  ensure_shell_profile_sources_env
-
-  export OPENAI_API_KEY
-  export OPENAI_BASE_URL
+  chmod 600 "$AUTH_FILE" "$CONFIG_FILE" 2>/dev/null || true
 
   log_ok "Codex config written to ${CODEX_DIR}"
 }
