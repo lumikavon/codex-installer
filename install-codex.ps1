@@ -15,6 +15,7 @@ $ConfigFile = Join-Path $CodexDir "config.toml"
 $EnvFile = Join-Path $CodexDir "env.ps1"
 $DesiredNpmCache = "D:\npm-cache"
 $DesiredNpmPrefix = "D:\npm-global"
+$script:PreferredProcessPathEntries = @()
 
 function Write-Step([string]$Message) {
     Write-Host "[STEP] $Message" -ForegroundColor Cyan
@@ -48,6 +49,12 @@ function Refresh-Path {
     if (-not [string]::IsNullOrWhiteSpace($userPath)) { $parts += $userPath }
     if ($parts.Count -gt 0) {
         $env:Path = ($parts -join ";")
+    }
+
+    foreach ($entry in @($script:PreferredProcessPathEntries)) {
+        if (-not [string]::IsNullOrWhiteSpace($entry) -and (Test-Path $entry)) {
+            Add-ProcessPathEntryFirst -Entry $entry | Out-Null
+        }
     }
 }
 
@@ -122,6 +129,140 @@ function Add-UserPathEntry([string]$Entry) {
     $updatedEntries += $normalizedEntry
     [Environment]::SetEnvironmentVariable("Path", ($updatedEntries -join ";"), "User")
     return $true
+}
+
+function Add-ProcessPathEntryFirst([string]$Entry) {
+    $normalizedEntry = Normalize-PathEntry -PathEntry $Entry
+    if ([string]::IsNullOrWhiteSpace($normalizedEntry)) {
+        return $false
+    }
+
+    $existingEntries = @(
+        Split-PathEntries -PathValue $env:Path | Where-Object {
+            -not [string]::Equals(
+                (Normalize-PathEntry -PathEntry $_),
+                $normalizedEntry,
+                [System.StringComparison]::OrdinalIgnoreCase
+            )
+        }
+    )
+
+    $env:Path = (@($normalizedEntry) + $existingEntries) -join ";"
+    return $true
+}
+
+function Register-PreferredProcessPathEntry([string]$Entry) {
+    $normalizedEntry = Normalize-PathEntry -PathEntry $Entry
+    if ([string]::IsNullOrWhiteSpace($normalizedEntry)) {
+        return $false
+    }
+
+    foreach ($existingEntry in @($script:PreferredProcessPathEntries)) {
+        if ([string]::Equals(
+                (Normalize-PathEntry -PathEntry $existingEntry),
+                $normalizedEntry,
+                [System.StringComparison]::OrdinalIgnoreCase
+            )) {
+            return $false
+        }
+    }
+
+    $script:PreferredProcessPathEntries += $normalizedEntry
+    return $true
+}
+
+function Test-PathUnderRoot {
+    param(
+        [string]$PathValue,
+        [string]$RootPath
+    )
+
+    $normalizedPath = Normalize-PathEntry -PathEntry $PathValue
+    $normalizedRoot = Normalize-PathEntry -PathEntry $RootPath
+    if ([string]::IsNullOrWhiteSpace($normalizedPath) -or [string]::IsNullOrWhiteSpace($normalizedRoot)) {
+        return $false
+    }
+
+    if ([string]::Equals($normalizedPath, $normalizedRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+        return $true
+    }
+
+    $rootWithSeparator = $normalizedRoot.TrimEnd('\') + '\'
+    return $normalizedPath.StartsWith($rootWithSeparator, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+function Get-ScoopRoot {
+    if (-not [string]::IsNullOrWhiteSpace($env:SCOOP)) {
+        return (Normalize-PathEntry -PathEntry $env:SCOOP)
+    }
+
+    return (Normalize-PathEntry -PathEntry (Join-Path $HOME "scoop"))
+}
+
+function Get-ScoopShimsPath {
+    return Join-Path (Get-ScoopRoot) "shims"
+}
+
+function Get-ScoopCommandPath {
+    foreach ($candidate in @(
+            (Join-Path (Get-ScoopShimsPath) "scoop.cmd"),
+            (Join-Path (Get-ScoopShimsPath) "scoop.ps1")
+        )) {
+        if (Test-Path $candidate) {
+            return $candidate
+        }
+    }
+
+    return Get-CommandPath -CommandName "scoop" -PreferredLeafNames @("scoop.cmd", "scoop.ps1")
+}
+
+function Ensure-ScoopOnPath {
+    $scoopShims = Get-ScoopShimsPath
+    if (-not (Test-Path $scoopShims)) {
+        return ""
+    }
+
+    Register-PreferredProcessPathEntry -Entry $scoopShims | Out-Null
+    if (Add-UserPathEntry -Entry $scoopShims) {
+        Write-Info "Added Scoop shims to user PATH: $scoopShims"
+    }
+
+    Refresh-Path
+    return $scoopShims
+}
+
+function Ensure-Scoop {
+    if (Command-Exists "scoop") {
+        Ensure-ScoopOnPath | Out-Null
+        return Get-ScoopCommandPath
+    }
+
+    Write-Info "Scoop not found. Installing Scoop..."
+    Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+    Invoke-RestMethod -Uri "https://get.scoop.sh" | Invoke-Expression
+
+    Ensure-ScoopOnPath | Out-Null
+    $scoopCommand = Get-ScoopCommandPath
+    if ([string]::IsNullOrWhiteSpace($scoopCommand) -or (-not (Test-Path $scoopCommand))) {
+        throw "Scoop installation failed. Could not find scoop command after installation."
+    }
+
+    Write-Ok "Scoop ready: $(Get-CommandOutputText -CommandPath $scoopCommand -Arguments @('--version'))"
+    return $scoopCommand
+}
+
+function Get-NodeCommandPath {
+    return Get-CommandPath -CommandName "node" -PreferredLeafNames @("node.exe", "node.cmd", "node")
+}
+
+function Get-NpmCommandPath {
+    return Get-CommandPath -CommandName "npm" -PreferredLeafNames @("npm.cmd", "npm.exe", "npm")
+}
+
+function Test-NodeReadyFromScoop {
+    return (Test-NodeReady) -and
+        (Test-PathUnderRoot -PathValue (Get-NodeCommandPath) -RootPath (Get-ScoopRoot)) -and
+        (Test-PathUnderRoot -PathValue (Get-NpmCommandPath) -RootPath (Get-ScoopRoot))
 }
 
 function Get-NodeMajor {
@@ -465,70 +606,48 @@ function Get-CodexStatus {
 function Install-NodeJs {
     Write-Step "1/5 Install Node.js"
 
+    $scoopCommand = Ensure-Scoop
     $nodeOk = $false
-    if ((Command-Exists "node") -and (Command-Exists "npm")) {
-        $major = Get-NodeMajor
-        if ($major -ge 18) {
-            $nodeOk = $true
-            Write-Info "Node.js already available: $(Get-CommandOutputText -CommandName 'node' -Arguments @('--version'))"
+
+    if (Test-NodeReadyFromScoop) {
+        $nodeOk = $true
+        Write-Info "Scoop Node.js already available: $(Get-CommandOutputText -CommandName 'node' -Arguments @('--version'))"
+    } elseif ((Command-Exists "node") -and (Command-Exists "npm")) {
+        $currentNodeVersion = Get-CommandOutputText -CommandName "node" -Arguments @("--version") -Fallback "unknown"
+        if ((Get-NodeMajor) -ge 18) {
+            Write-Warn "Existing Node.js/npm are not provided by Scoop. Installing scoop nodejs-lts and prioritizing Scoop shims."
+            Write-Info "Current node path: $(Get-NodeCommandPath)"
+            Write-Info "Current npm path: $(Get-NpmCommandPath)"
         } else {
-            Write-Warn "Node.js version too old: $(Get-CommandOutputText -CommandName 'node' -Arguments @('--version') -Fallback 'unknown'). Need >= 18."
+            Write-Warn "Node.js version too old: $currentNodeVersion. Need Scoop nodejs-lts >= 18."
         }
     }
 
     if (-not $nodeOk) {
-        $attemptedManagers = @()
+        Write-Info "Installing Node.js with Scoop"
+        & $scoopCommand install nodejs-lts
+        $installExitCode = $LASTEXITCODE
+        Ensure-ScoopOnPath | Out-Null
 
-        if (Command-Exists "winget") {
-            $attemptedManagers += "winget"
-            Write-Info "Installing Node.js with winget (source: winget)"
-            & winget install --id OpenJS.NodeJS.LTS -e --source winget --accept-source-agreements --accept-package-agreements --silent
-            Refresh-Path
-            if (Test-NodeReady) {
-                $nodeOk = $true
-            }
-            if ($LASTEXITCODE -ne 0) {
-                Write-Warn "winget returned non-zero exit code ($LASTEXITCODE). Trying other package managers if available."
-            }
+        if ($installExitCode -ne 0) {
+            throw "Scoop nodejs-lts installation failed (exit code $installExitCode)."
         }
 
-        if ((-not $nodeOk) -and (Command-Exists "scoop")) {
-            $attemptedManagers += "scoop"
-            Write-Info "Installing Node.js with scoop"
-            & scoop install nodejs-lts
-            Refresh-Path
-            if (Test-NodeReady) {
-                $nodeOk = $true
-            } elseif ($LASTEXITCODE -ne 0) {
-                Write-Warn "scoop installation failed (exit code $LASTEXITCODE)."
-            }
-        }
-
-        if ((-not $nodeOk) -and (Command-Exists "choco")) {
-            $attemptedManagers += "choco"
-            Write-Info "Installing Node.js with chocolatey"
-            & choco install -y nodejs-lts
-            Refresh-Path
-            if (Test-NodeReady) {
-                $nodeOk = $true
-            } elseif ($LASTEXITCODE -ne 0) {
-                Write-Warn "chocolatey installation failed (exit code $LASTEXITCODE)."
-            }
-        }
-
-        if ($attemptedManagers.Count -eq 0) {
-            throw "No supported package manager found (winget/scoop/choco). Install Node.js 18+ manually."
+        if (Test-NodeReadyFromScoop) {
+            $nodeOk = $true
+        } else {
+            throw "Node.js/npm are still not being resolved from Scoop after installation."
         }
     }
 
-    Refresh-Path
+    Ensure-ScoopOnPath | Out-Null
 
-    if ((-not (Command-Exists "node")) -or (-not (Command-Exists "npm"))) {
-        throw "Node.js/npm not found after installation."
+    if (-not (Test-NodeReadyFromScoop)) {
+        throw "Node.js/npm not found from Scoop after installation."
     }
 
     if ((Get-NodeMajor) -lt 18) {
-        throw "Installed Node.js is still < 18. Please upgrade Node.js."
+        throw "Installed Scoop Node.js is still < 18. Please upgrade Node.js."
     }
 
     & npm config set registry $NpmRegistry --global | Out-Null
