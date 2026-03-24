@@ -13,6 +13,8 @@ $CodexDir = Join-Path $HOME ".codex"
 $AuthFile = Join-Path $CodexDir "auth.json"
 $ConfigFile = Join-Path $CodexDir "config.toml"
 $EnvFile = Join-Path $CodexDir "env.ps1"
+$DesiredNpmCache = "D:\npm-cache"
+$DesiredNpmPrefix = "D:\npm-global"
 
 function Write-Step([string]$Message) {
     Write-Host "[STEP] $Message" -ForegroundColor Cyan
@@ -207,6 +209,40 @@ function Get-NpmGlobalPrefix {
     }
 }
 
+function Get-NpmConfigValue([string]$Key) {
+    if (-not (Command-Exists "npm")) {
+        return ""
+    }
+
+    try {
+        $output = & npm config get $Key 2>$null
+        if ($LASTEXITCODE -ne 0 -or $null -eq $output) {
+            return ""
+        }
+
+        $text = ((@($output) | ForEach-Object { "$_" }) -join [Environment]::NewLine).Trim()
+        if ([string]::IsNullOrWhiteSpace($text) -or $text -eq "undefined" -or $text -eq "null") {
+            return ""
+        }
+
+        return $text
+    } catch {
+        return ""
+    }
+}
+
+function Set-NpmGlobalConfigValue {
+    param(
+        [string]$Key,
+        [string]$Value
+    )
+
+    & npm config set $Key $Value --global | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to set npm $Key to $Value."
+    }
+}
+
 function Ensure-NpmGlobalPrefixOnPath {
     $prefix = Get-NpmGlobalPrefix
     if ([string]::IsNullOrWhiteSpace($prefix)) {
@@ -214,10 +250,7 @@ function Ensure-NpmGlobalPrefixOnPath {
     }
 
     $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-    $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
-
-    if ((-not (Test-PathContainsEntry -PathValue $userPath -Entry $prefix)) -and
-        (-not (Test-PathContainsEntry -PathValue $machinePath -Entry $prefix))) {
+    if (-not (Test-PathContainsEntry -PathValue $userPath -Entry $prefix)) {
         if (Add-UserPathEntry -Entry $prefix) {
             Write-Info "Added npm global prefix to user PATH: $prefix"
         }
@@ -225,6 +258,42 @@ function Ensure-NpmGlobalPrefixOnPath {
 
     Refresh-Path
     return $prefix
+}
+
+function Ensure-NpmDefaults {
+    if (-not (Command-Exists "npm")) {
+        throw "npm not found. Node.js install failed."
+    }
+
+    foreach ($path in @($DesiredNpmCache, $DesiredNpmPrefix)) {
+        if (-not (Test-Path $path)) {
+            New-Item -ItemType Directory -Path $path -Force | Out-Null
+        }
+    }
+
+    $currentCache = Get-NpmConfigValue -Key "cache"
+    if (-not (Paths-Match -Left $currentCache -Right $DesiredNpmCache)) {
+        Set-NpmGlobalConfigValue -Key "cache" -Value $DesiredNpmCache
+        Write-Info "Set npm cache: $DesiredNpmCache"
+    }
+
+    $currentPrefix = Get-NpmGlobalPrefix
+    if (-not (Paths-Match -Left $currentPrefix -Right $DesiredNpmPrefix)) {
+        Set-NpmGlobalConfigValue -Key "prefix" -Value $DesiredNpmPrefix
+        Write-Info "Set npm global prefix: $DesiredNpmPrefix"
+    }
+
+    $effectiveCache = Get-NpmConfigValue -Key "cache"
+    if (-not (Paths-Match -Left $effectiveCache -Right $DesiredNpmCache)) {
+        throw "npm cache is $effectiveCache, expected $DesiredNpmCache."
+    }
+
+    $effectivePrefix = Get-NpmGlobalPrefix
+    if (-not (Paths-Match -Left $effectivePrefix -Right $DesiredNpmPrefix)) {
+        throw "npm global prefix is $effectivePrefix, expected $DesiredNpmPrefix."
+    }
+
+    Ensure-NpmGlobalPrefixOnPath | Out-Null
 }
 
 function Get-CodexShimPath {
@@ -463,6 +532,11 @@ function Install-NodeJs {
     }
 
     & npm config set registry $NpmRegistry --global | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to set npm registry to $NpmRegistry."
+    }
+
+    Ensure-NpmDefaults
     Write-Ok "Node.js ready: $(Get-CommandOutputText -CommandName 'node' -Arguments @('--version')) / npm $(Get-CommandOutputText -CommandName 'npm' -Arguments @('--version'))"
 }
 
@@ -612,6 +686,11 @@ function Print-Summary {
         $npmPrefix = "unknown"
     }
 
+    $npmCache = Get-NpmConfigValue -Key "cache"
+    if ([string]::IsNullOrWhiteSpace($npmCache)) {
+        $npmCache = "unknown"
+    }
+
     $prefixOnPath = if ($npmPrefix -eq "unknown") {
         "unknown"
     } elseif (Test-PathContainsEntry -PathValue $env:Path -Entry $npmPrefix) {
@@ -632,6 +711,7 @@ function Print-Summary {
     Write-Host "  npm              : $npmVersion"
     Write-Host "  codex            : $codexVersion"
     Write-Host "  codex path       : $codexPath"
+    Write-Host "  npm cache        : $npmCache"
     Write-Host "  npm prefix       : $npmPrefix"
     Write-Host "  prefix on PATH   : $prefixOnPath"
     Write-Host "  OPENAI_BASE_URL  : $script:OpenAIBaseUrl"
