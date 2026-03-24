@@ -231,6 +231,47 @@ function Ensure-ScoopOnPath {
     return $scoopShims
 }
 
+function Test-ExecutionPolicyAllowsScriptInstall([string]$Policy) {
+    return $Policy -in @("Bypass", "Unrestricted", "RemoteSigned")
+}
+
+function Ensure-ScoopInstallExecutionPolicy {
+    $effectivePolicy = Get-ExecutionPolicy
+    if (Test-ExecutionPolicyAllowsScriptInstall -Policy $effectivePolicy) {
+        Write-Info "PowerShell execution policy already allows Scoop install: $effectivePolicy"
+        return
+    }
+
+    try {
+        Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force -ErrorAction Stop
+    } catch {
+        $effectivePolicy = Get-ExecutionPolicy
+        if (Test-ExecutionPolicyAllowsScriptInstall -Policy $effectivePolicy) {
+            Write-Info "PowerShell execution policy is already usable because a more specific scope applies: $effectivePolicy"
+            return
+        }
+
+        try {
+            Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force -ErrorAction Stop
+        } catch {
+            $effectivePolicy = Get-ExecutionPolicy
+            if (Test-ExecutionPolicyAllowsScriptInstall -Policy $effectivePolicy) {
+                Write-Info "PowerShell execution policy is usable after fallback: $effectivePolicy"
+                return
+            }
+
+            throw "Unable to enable a PowerShell execution policy for Scoop install. Current effective policy: $effectivePolicy"
+        }
+    }
+
+    $effectivePolicy = Get-ExecutionPolicy
+    if (-not (Test-ExecutionPolicyAllowsScriptInstall -Policy $effectivePolicy)) {
+        throw "PowerShell execution policy still blocks Scoop install: $effectivePolicy"
+    }
+
+    Write-Info "PowerShell execution policy ready for Scoop install: $effectivePolicy"
+}
+
 function Ensure-Scoop {
     if (Command-Exists "scoop") {
         Ensure-ScoopOnPath | Out-Null
@@ -238,7 +279,7 @@ function Ensure-Scoop {
     }
 
     Write-Info "Scoop not found. Installing Scoop..."
-    Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+    Ensure-ScoopInstallExecutionPolicy
     Invoke-RestMethod -Uri "https://get.scoop.sh" | Invoke-Expression
 
     Ensure-ScoopOnPath | Out-Null
