@@ -34,6 +34,10 @@ function Command-Exists([string]$CommandName) {
     return $null -ne (Get-Command $CommandName -ErrorAction SilentlyContinue)
 }
 
+function Test-IsWindows {
+    return $env:OS -eq "Windows_NT"
+}
+
 function Refresh-Path {
     $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
     $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
@@ -135,17 +139,29 @@ function Test-NodeReady {
 
 function Get-CommandOutputText {
     param(
-        [string]$CommandName,
+        [string]$CommandName = "",
+        [string]$CommandPath = "",
         [string[]]$Arguments = @(),
         [string]$Fallback = "not found"
     )
 
-    if (-not (Command-Exists $CommandName)) {
+    $target = ""
+    if (-not [string]::IsNullOrWhiteSpace($CommandPath)) {
+        if (-not (Test-Path $CommandPath)) {
+            return $Fallback
+        }
+        $target = $CommandPath
+    } elseif (-not [string]::IsNullOrWhiteSpace($CommandName)) {
+        if (-not (Command-Exists $CommandName)) {
+            return $Fallback
+        }
+        $target = $CommandName
+    } else {
         return $Fallback
     }
 
     try {
-        $output = & $CommandName @Arguments 2>$null
+        $output = & $target @Arguments 2>$null
         if ($LASTEXITCODE -ne 0 -or $null -eq $output) {
             return $Fallback
         }
@@ -159,6 +175,14 @@ function Get-CommandOutputText {
     } catch {
         return $Fallback
     }
+}
+
+function Get-CodexShimCandidates {
+    if (Test-IsWindows) {
+        return @("codex.ps1", "codex.cmd", "codex")
+    }
+
+    return @("codex")
 }
 
 function Get-NpmGlobalPrefix {
@@ -204,12 +228,20 @@ function Ensure-NpmGlobalPrefixOnPath {
 }
 
 function Get-CodexShimPath {
-    $prefix = Get-NpmGlobalPrefix
+    param(
+        [string]$Prefix = ""
+    )
+
+    $prefix = $Prefix
+    if ([string]::IsNullOrWhiteSpace($prefix)) {
+        $prefix = Get-NpmGlobalPrefix
+    }
+
     if ([string]::IsNullOrWhiteSpace($prefix)) {
         return ""
     }
 
-    foreach ($candidate in @("codex.cmd", "codex.ps1", "codex")) {
+    foreach ($candidate in (Get-CodexShimCandidates)) {
         $candidatePath = Join-Path $prefix $candidate
         if (Test-Path $candidatePath) {
             return $candidatePath
@@ -219,13 +251,146 @@ function Get-CodexShimPath {
     return ""
 }
 
-function Get-CommandPath([string]$CommandName) {
-    $command = Get-Command $CommandName -ErrorAction SilentlyContinue
-    if ($null -eq $command) {
+function Ensure-PowerShellCodexShim {
+    param(
+        [string]$Prefix
+    )
+
+    if (-not (Test-IsWindows) -or [string]::IsNullOrWhiteSpace($Prefix)) {
         return ""
     }
 
-    return $command.Path
+    $ps1Path = Join-Path $Prefix "codex.ps1"
+    if (Test-Path $ps1Path) {
+        return $ps1Path
+    }
+
+    $cmdPath = Join-Path $Prefix "codex.cmd"
+    if (-not (Test-Path $cmdPath)) {
+        return ""
+    }
+
+    $payload = @'
+$cmdShim = Join-Path $PSScriptRoot "codex.cmd"
+& $cmdShim @args
+exit $LASTEXITCODE
+'@
+
+    Upsert-ManagedBlock -Path $ps1Path -Payload $payload.TrimEnd()
+    Write-Info "Created PowerShell codex launcher: $ps1Path"
+    return $ps1Path
+}
+
+function Get-CommandPath {
+    param(
+        [string]$CommandName,
+        [string[]]$PreferredLeafNames = @()
+    )
+
+    $commands = @(Get-Command $CommandName -All -ErrorAction SilentlyContinue | Where-Object {
+            -not [string]::IsNullOrWhiteSpace($_.Path)
+        })
+    if ($commands.Count -eq 0) {
+        return ""
+    }
+
+    $firstCommand = $commands[0]
+    $firstCommandDirectory = Normalize-PathEntry -PathEntry (Split-Path -Parent $firstCommand.Path)
+    $sameDirectoryCommands = @($commands | Where-Object {
+            [string]::Equals(
+                (Normalize-PathEntry -PathEntry (Split-Path -Parent $_.Path)),
+                $firstCommandDirectory,
+                [System.StringComparison]::OrdinalIgnoreCase
+            )
+        })
+
+    foreach ($preferredLeafName in $PreferredLeafNames) {
+        $match = $sameDirectoryCommands | Where-Object {
+            (-not [string]::IsNullOrWhiteSpace($_.Path)) -and
+            [string]::Equals(
+                [System.IO.Path]::GetFileName($_.Path),
+                $preferredLeafName,
+                [System.StringComparison]::OrdinalIgnoreCase
+            )
+        } | Select-Object -First 1
+
+        if ($null -ne $match) {
+            return $match.Path
+        }
+    }
+
+    return $firstCommand.Path
+}
+
+function Get-CodexVisiblePath {
+    return Get-CommandPath -CommandName "codex" -PreferredLeafNames (Get-CodexShimCandidates)
+}
+
+function Get-CodexStatus {
+    param(
+        [string]$InstalledCodexPath = "",
+        [string]$VisibleCodexPath = ""
+    )
+
+    $installedPath = $InstalledCodexPath
+    if ([string]::IsNullOrWhiteSpace($installedPath)) {
+        $installedPath = Get-CodexShimPath
+    }
+
+    $visiblePath = $VisibleCodexPath
+    if ([string]::IsNullOrWhiteSpace($visiblePath)) {
+        $visiblePath = Get-CodexVisiblePath
+    }
+
+    $installedVersion = if (-not [string]::IsNullOrWhiteSpace($installedPath)) {
+        Get-CommandOutputText -CommandPath $installedPath -Arguments @("--version")
+    } else {
+        "not found"
+    }
+
+    $visibleVersion = if (-not [string]::IsNullOrWhiteSpace($visiblePath)) {
+        Get-CommandOutputText -CommandPath $visiblePath -Arguments @("--version")
+    } else {
+        "not found"
+    }
+
+    $installedOnPath = (-not [string]::IsNullOrWhiteSpace($installedPath)) -and
+        (-not [string]::IsNullOrWhiteSpace($visiblePath)) -and
+        (Paths-Match -Left $installedPath -Right $visiblePath)
+    $hasConflict = (-not [string]::IsNullOrWhiteSpace($installedPath)) -and
+        (-not [string]::IsNullOrWhiteSpace($visiblePath)) -and
+        (-not (Paths-Match -Left $installedPath -Right $visiblePath))
+
+    $displayVersion = "not found"
+    $displayPath = if (-not [string]::IsNullOrWhiteSpace($visiblePath)) {
+        $visiblePath
+    } elseif (-not [string]::IsNullOrWhiteSpace($installedPath)) {
+        $installedPath
+    } else {
+        "not found"
+    }
+
+    if ($hasConflict -and ($installedVersion -ne "not found")) {
+        $displayVersion = "installed, but current PATH resolves to another codex command"
+    } elseif ($installedOnPath -and ($visibleVersion -ne "not found")) {
+        $displayVersion = $visibleVersion
+    } elseif (($installedVersion -ne "not found") -and (-not $installedOnPath)) {
+        $displayVersion = "installed but not on PATH in current shell"
+        $displayPath = $installedPath
+    } elseif ($visibleVersion -ne "not found") {
+        $displayVersion = $visibleVersion
+    }
+
+    return [PSCustomObject]@{
+        InstalledPath    = $installedPath
+        VisiblePath      = $visiblePath
+        InstalledVersion = $installedVersion
+        VisibleVersion   = $visibleVersion
+        InstalledOnPath  = $installedOnPath
+        HasConflict      = $hasConflict
+        DisplayVersion   = $displayVersion
+        DisplayPath      = $displayPath
+    }
 }
 
 function Install-NodeJs {
@@ -313,19 +478,23 @@ function Install-Codex {
     }
 
     $npmPrefix = Ensure-NpmGlobalPrefixOnPath
-    $codexVersion = Get-CommandOutputText -CommandName "codex" -Arguments @("--version")
-    $visibleCodexPath = Get-CommandPath -CommandName "codex"
-    $installedCodexPath = Get-CodexShimPath
+    Ensure-PowerShellCodexShim -Prefix $npmPrefix | Out-Null
+    $installedCodexPath = Get-CodexShimPath -Prefix $npmPrefix
+    $visibleCodexPath = Get-CodexVisiblePath
+    $codexStatus = Get-CodexStatus -InstalledCodexPath $installedCodexPath -VisibleCodexPath $visibleCodexPath
 
-    if ($codexVersion -ne "not found") {
-        Write-Ok "Codex installed: $codexVersion"
-    } elseif (-not [string]::IsNullOrWhiteSpace($installedCodexPath)) {
-        if ((-not [string]::IsNullOrWhiteSpace($visibleCodexPath)) -and
-            (-not (Paths-Match -Left $visibleCodexPath -Right $installedCodexPath))) {
+    if ($codexStatus.InstalledVersion -ne "not found") {
+        if ($codexStatus.HasConflict) {
+            Write-Warn "Codex installed: $($codexStatus.InstalledVersion)"
             Write-Warn "Codex was installed to $installedCodexPath, but the current shell resolves 'codex' to $visibleCodexPath. Reopen terminal or fix PATH ordering."
+        } elseif ($codexStatus.InstalledOnPath) {
+            Write-Ok "Codex installed: $($codexStatus.InstalledVersion)"
         } else {
+            Write-Warn "Codex installed: $($codexStatus.InstalledVersion)"
             Write-Warn "Codex was installed under $npmPrefix but is not visible yet in the current shell. Reopen terminal and retry."
         }
+    } elseif (-not [string]::IsNullOrWhiteSpace($installedCodexPath)) {
+        Write-Warn "Codex launcher was found at $installedCodexPath, but '--version' did not return successfully."
     } else {
         Write-Warn "npm install completed, but no codex launcher was found under $npmPrefix."
     }
@@ -430,28 +599,12 @@ function Print-Summary {
 
     $nodeVersion = Get-CommandOutputText -CommandName "node" -Arguments @("--version")
     $npmVersion = Get-CommandOutputText -CommandName "npm" -Arguments @("--version")
-    $codexVersion = Get-CommandOutputText -CommandName "codex" -Arguments @("--version")
-    $visibleCodexPath = Get-CommandPath -CommandName "codex"
-    $installedCodexPath = Get-CodexShimPath
-    $codexPath = if (($codexVersion -ne "not found") -and (-not [string]::IsNullOrWhiteSpace($visibleCodexPath))) {
-        $visibleCodexPath
-    } elseif (-not [string]::IsNullOrWhiteSpace($installedCodexPath)) {
-        $installedCodexPath
-    } else {
-        $visibleCodexPath
-    }
+    $codexStatus = Get-CodexStatus
+    $codexVersion = $codexStatus.DisplayVersion
+    $codexPath = $codexStatus.DisplayPath
 
     if ([string]::IsNullOrWhiteSpace($codexPath)) {
         $codexPath = "not found"
-    }
-
-    if (($codexVersion -eq "not found") -and (-not [string]::IsNullOrWhiteSpace($installedCodexPath))) {
-        if ((-not [string]::IsNullOrWhiteSpace($visibleCodexPath)) -and
-            (-not (Paths-Match -Left $visibleCodexPath -Right $installedCodexPath))) {
-            $codexVersion = "installed, but current PATH resolves to another codex command"
-        } else {
-            $codexVersion = "installed but not on PATH in current shell"
-        }
     }
 
     $npmPrefix = Get-NpmGlobalPrefix
