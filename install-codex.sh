@@ -21,7 +21,7 @@ Usage:
   bash install-codex.sh [--openai-api-key <key>] [--openai-base-url <url>] [--npm-registry <url>]
 
 GitHub one-line install (replace owner/repo/ref):
-  curl -fsSL https://raw.githubusercontent.com/<owner>/<repo>/<ref>/.agents/skills/agents-installer/scripts/install-codex.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/<owner>/<repo>/<ref>/install-codex.sh | bash
 EOF
 }
 
@@ -291,10 +291,11 @@ mask_secret() {
 print_summary() {
   log_step "5/5 Print install summary"
 
-  local node_ver npm_ver codex_ver
+  local node_ver npm_ver codex_ver env_script_status
   node_ver="$(command_exists node && node --version || printf 'not found')"
   npm_ver="$(command_exists npm && npm --version || printf 'not found')"
   codex_ver="$(command_exists codex && codex --version || printf 'not found')"
+  env_script_status="not used (Codex reads auth.json/config.toml)"
 
   cat <<EOF
 
@@ -306,10 +307,10 @@ Install Result
   OPENAI_API_KEY   : $(mask_secret "$OPENAI_API_KEY")
   auth.json        : ${AUTH_FILE}
   config.toml      : ${CONFIG_FILE}
-  env script       : ${ENV_FILE}
+  env script       : ${env_script_status}
 
 GitHub one-line install (replace owner/repo/ref):
-  curl -fsSL https://raw.githubusercontent.com/<owner>/<repo>/<ref>/.agents/skills/agents-installer/scripts/install-codex.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/<owner>/<repo>/<ref>/install-codex.sh | bash
 EOF
 }
 

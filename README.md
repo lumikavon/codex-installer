@@ -7,7 +7,7 @@ Cross-platform installer scripts for setting up OpenAI Codex CLI with API-key ba
 - `install-codex.ps1`: Windows PowerShell installer
 - `install-codex.sh`: Linux installer script
 
-Both scripts install Node.js (18+), install `@openai/codex`, and configure Codex under `~/.codex`.
+Both scripts install Node.js, install `@openai/codex`, and configure Codex under `~/.codex`.
 
 ## What the scripts configure
 
@@ -15,10 +15,8 @@ After installation, the scripts set up:
 
 - `~/.codex/auth.json`
 - `~/.codex/config.toml`
-- `~/.codex/env.ps1` (Windows) or `~/.codex/env.sh` (Linux)
-- Environment variables:
-  - `OPENAI_API_KEY`
-  - `OPENAI_BASE_URL`
+- Windows installer also ensures the global npm prefix is present on the user `PATH`
+- Linux installer ensures the npm user prefix bin directory is available in future shells
 
 Default `OPENAI_BASE_URL` is:
 
@@ -81,9 +79,6 @@ Each installer follows a 5-step flow:
 
 ## Notes
 
-- The scripts overwrite or update a managed config block marked by:
-  - `# >>> codex-installer >>>`
-  - `# <<< codex-installer <<<`
-- Linux script also ensures shell profiles source `~/.codex/env.sh`.
+- Current Codex versions read credentials from `~/.codex/auth.json` and `~/.codex/config.toml`; no separate `env.ps1` / `env.sh` file is required.
 - If `codex` is not immediately available in the current shell, reopen your terminal.
 

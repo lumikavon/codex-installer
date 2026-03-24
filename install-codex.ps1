@@ -45,6 +45,79 @@ function Refresh-Path {
     }
 }
 
+function Normalize-PathEntry([string]$PathEntry) {
+    if ([string]::IsNullOrWhiteSpace($PathEntry)) {
+        return ""
+    }
+
+    return $PathEntry.Trim().Trim('"').TrimEnd('\')
+}
+
+function Split-PathEntries([string]$PathValue) {
+    if ([string]::IsNullOrWhiteSpace($PathValue)) {
+        return @()
+    }
+
+    return @($PathValue -split ";" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+}
+
+function Test-PathContainsEntry {
+    param(
+        [string]$PathValue,
+        [string]$Entry
+    )
+
+    $normalizedEntry = Normalize-PathEntry -PathEntry $Entry
+    if ([string]::IsNullOrWhiteSpace($normalizedEntry)) {
+        return $false
+    }
+
+    foreach ($existingEntry in (Split-PathEntries -PathValue $PathValue)) {
+        if ([string]::Equals(
+                (Normalize-PathEntry -PathEntry $existingEntry),
+                $normalizedEntry,
+                [System.StringComparison]::OrdinalIgnoreCase
+            )) {
+            return $true
+        }
+    }
+
+    return $false
+}
+
+function Paths-Match {
+    param(
+        [string]$Left,
+        [string]$Right
+    )
+
+    $normalizedLeft = Normalize-PathEntry -PathEntry $Left
+    $normalizedRight = Normalize-PathEntry -PathEntry $Right
+
+    if ([string]::IsNullOrWhiteSpace($normalizedLeft) -or [string]::IsNullOrWhiteSpace($normalizedRight)) {
+        return $false
+    }
+
+    return [string]::Equals($normalizedLeft, $normalizedRight, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+function Add-UserPathEntry([string]$Entry) {
+    $normalizedEntry = Normalize-PathEntry -PathEntry $Entry
+    if ([string]::IsNullOrWhiteSpace($normalizedEntry)) {
+        return $false
+    }
+
+    $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    if (Test-PathContainsEntry -PathValue $userPath -Entry $normalizedEntry) {
+        return $false
+    }
+
+    $updatedEntries = Split-PathEntries -PathValue $userPath
+    $updatedEntries += $normalizedEntry
+    [Environment]::SetEnvironmentVariable("Path", ($updatedEntries -join ";"), "User")
+    return $true
+}
+
 function Get-NodeMajor {
     if (-not (Command-Exists "node")) {
         return 0
@@ -86,6 +159,73 @@ function Get-CommandOutputText {
     } catch {
         return $Fallback
     }
+}
+
+function Get-NpmGlobalPrefix {
+    if (-not (Command-Exists "npm")) {
+        return ""
+    }
+
+    try {
+        $output = & npm prefix -g 2>$null
+        if ($LASTEXITCODE -ne 0 -or $null -eq $output) {
+            return ""
+        }
+
+        $text = (@($output) | ForEach-Object { "$_" }) -join [Environment]::NewLine
+        if ([string]::IsNullOrWhiteSpace($text)) {
+            return ""
+        }
+
+        return ($text + "").Trim()
+    } catch {
+        return ""
+    }
+}
+
+function Ensure-NpmGlobalPrefixOnPath {
+    $prefix = Get-NpmGlobalPrefix
+    if ([string]::IsNullOrWhiteSpace($prefix)) {
+        return ""
+    }
+
+    $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
+
+    if ((-not (Test-PathContainsEntry -PathValue $userPath -Entry $prefix)) -and
+        (-not (Test-PathContainsEntry -PathValue $machinePath -Entry $prefix))) {
+        if (Add-UserPathEntry -Entry $prefix) {
+            Write-Info "Added npm global prefix to user PATH: $prefix"
+        }
+    }
+
+    Refresh-Path
+    return $prefix
+}
+
+function Get-CodexShimPath {
+    $prefix = Get-NpmGlobalPrefix
+    if ([string]::IsNullOrWhiteSpace($prefix)) {
+        return ""
+    }
+
+    foreach ($candidate in @("codex.cmd", "codex.ps1", "codex")) {
+        $candidatePath = Join-Path $prefix $candidate
+        if (Test-Path $candidatePath) {
+            return $candidatePath
+        }
+    }
+
+    return ""
+}
+
+function Get-CommandPath([string]$CommandName) {
+    $command = Get-Command $CommandName -ErrorAction SilentlyContinue
+    if ($null -eq $command) {
+        return ""
+    }
+
+    return $command.Path
 }
 
 function Install-NodeJs {
@@ -172,11 +312,22 @@ function Install-Codex {
         throw "Codex installation failed."
     }
 
-    Refresh-Path
-    if (Command-Exists "codex") {
-        Write-Ok "Codex installed: $(Get-CommandOutputText -CommandName 'codex' -Arguments @('--version'))"
+    $npmPrefix = Ensure-NpmGlobalPrefixOnPath
+    $codexVersion = Get-CommandOutputText -CommandName "codex" -Arguments @("--version")
+    $visibleCodexPath = Get-CommandPath -CommandName "codex"
+    $installedCodexPath = Get-CodexShimPath
+
+    if ($codexVersion -ne "not found") {
+        Write-Ok "Codex installed: $codexVersion"
+    } elseif (-not [string]::IsNullOrWhiteSpace($installedCodexPath)) {
+        if ((-not [string]::IsNullOrWhiteSpace($visibleCodexPath)) -and
+            (-not (Paths-Match -Left $visibleCodexPath -Right $installedCodexPath))) {
+            Write-Warn "Codex was installed to $installedCodexPath, but the current shell resolves 'codex' to $visibleCodexPath. Reopen terminal or fix PATH ordering."
+        } else {
+            Write-Warn "Codex was installed under $npmPrefix but is not visible yet in the current shell. Reopen terminal and retry."
+        }
     } else {
-        Write-Warn "codex command not visible yet in current shell. Reopen terminal and retry."
+        Write-Warn "npm install completed, but no codex launcher was found under $npmPrefix."
     }
 }
 
@@ -280,20 +431,64 @@ function Print-Summary {
     $nodeVersion = Get-CommandOutputText -CommandName "node" -Arguments @("--version")
     $npmVersion = Get-CommandOutputText -CommandName "npm" -Arguments @("--version")
     $codexVersion = Get-CommandOutputText -CommandName "codex" -Arguments @("--version")
+    $visibleCodexPath = Get-CommandPath -CommandName "codex"
+    $installedCodexPath = Get-CodexShimPath
+    $codexPath = if (($codexVersion -ne "not found") -and (-not [string]::IsNullOrWhiteSpace($visibleCodexPath))) {
+        $visibleCodexPath
+    } elseif (-not [string]::IsNullOrWhiteSpace($installedCodexPath)) {
+        $installedCodexPath
+    } else {
+        $visibleCodexPath
+    }
+
+    if ([string]::IsNullOrWhiteSpace($codexPath)) {
+        $codexPath = "not found"
+    }
+
+    if (($codexVersion -eq "not found") -and (-not [string]::IsNullOrWhiteSpace($installedCodexPath))) {
+        if ((-not [string]::IsNullOrWhiteSpace($visibleCodexPath)) -and
+            (-not (Paths-Match -Left $visibleCodexPath -Right $installedCodexPath))) {
+            $codexVersion = "installed, but current PATH resolves to another codex command"
+        } else {
+            $codexVersion = "installed but not on PATH in current shell"
+        }
+    }
+
+    $npmPrefix = Get-NpmGlobalPrefix
+    if ([string]::IsNullOrWhiteSpace($npmPrefix)) {
+        $npmPrefix = "unknown"
+    }
+
+    $prefixOnPath = if ($npmPrefix -eq "unknown") {
+        "unknown"
+    } elseif (Test-PathContainsEntry -PathValue $env:Path -Entry $npmPrefix) {
+        "yes"
+    } else {
+        "no"
+    }
+
+    $envScriptStatus = if (Test-Path $EnvFile) {
+        $EnvFile
+    } else {
+        "not used (Codex reads auth.json/config.toml)"
+    }
 
     Write-Host ""
     Write-Host "Install Result"
     Write-Host "  node             : $nodeVersion"
     Write-Host "  npm              : $npmVersion"
     Write-Host "  codex            : $codexVersion"
+    Write-Host "  codex path       : $codexPath"
+    Write-Host "  npm prefix       : $npmPrefix"
+    Write-Host "  prefix on PATH   : $prefixOnPath"
     Write-Host "  OPENAI_BASE_URL  : $script:OpenAIBaseUrl"
     Write-Host "  OPENAI_API_KEY   : $(Mask-Secret $script:OpenAIApiKey)"
     Write-Host "  auth.json        : $AuthFile"
     Write-Host "  config.toml      : $ConfigFile"
-    Write-Host "  env script       : $EnvFile"
+    Write-Host "  env script       : $envScriptStatus"
     Write-Host ""
     Write-Host "GitHub one-line install (replace owner/repo/ref):"
-    Write-Host "  irm https://raw.githubusercontent.com/<owner>/<repo>/<ref>/.agents/skills/agents-installer/scripts/install-codex.ps1 | iex"
+    Write-Host "  irm https://raw.githubusercontent.com/<owner>/<repo>/<ref>/install-codex.ps1 | iex"
 }
 
 Install-NodeJs
