@@ -60,6 +60,34 @@ function Test-NodeReady {
     return (Command-Exists "node") -and (Command-Exists "npm") -and ((Get-NodeMajor) -ge 18)
 }
 
+function Get-CommandOutputText {
+    param(
+        [string]$CommandName,
+        [string[]]$Arguments = @(),
+        [string]$Fallback = "not found"
+    )
+
+    if (-not (Command-Exists $CommandName)) {
+        return $Fallback
+    }
+
+    try {
+        $output = & $CommandName @Arguments 2>$null
+        if ($LASTEXITCODE -ne 0 -or $null -eq $output) {
+            return $Fallback
+        }
+
+        $text = (@($output) | ForEach-Object { "$_" }) -join [Environment]::NewLine
+        if ([string]::IsNullOrWhiteSpace($text)) {
+            return $Fallback
+        }
+
+        return ($text + "").Trim()
+    } catch {
+        return $Fallback
+    }
+}
+
 function Install-NodeJs {
     Write-Step "1/5 Install Node.js"
 
@@ -68,9 +96,9 @@ function Install-NodeJs {
         $major = Get-NodeMajor
         if ($major -ge 18) {
             $nodeOk = $true
-            Write-Info "Node.js already available: $(node --version)"
+            Write-Info "Node.js already available: $(Get-CommandOutputText -CommandName 'node' -Arguments @('--version'))"
         } else {
-            Write-Warn "Node.js version too old: $(node --version). Need >= 18."
+            Write-Warn "Node.js version too old: $(Get-CommandOutputText -CommandName 'node' -Arguments @('--version') -Fallback 'unknown'). Need >= 18."
         }
     }
 
@@ -130,7 +158,7 @@ function Install-NodeJs {
     }
 
     & npm config set registry $NpmRegistry --global | Out-Null
-    Write-Ok "Node.js ready: $(node --version) / npm $(npm --version)"
+    Write-Ok "Node.js ready: $(Get-CommandOutputText -CommandName 'node' -Arguments @('--version')) / npm $(Get-CommandOutputText -CommandName 'npm' -Arguments @('--version'))"
 }
 
 function Install-Codex {
@@ -146,7 +174,7 @@ function Install-Codex {
 
     Refresh-Path
     if (Command-Exists "codex") {
-        Write-Ok "Codex installed: $(codex --version)"
+        Write-Ok "Codex installed: $(Get-CommandOutputText -CommandName 'codex' -Arguments @('--version'))"
     } else {
         Write-Warn "codex command not visible yet in current shell. Reopen terminal and retry."
     }
@@ -164,18 +192,18 @@ function Convert-SecureStringToPlainText([Security.SecureString]$Secure) {
 function Read-OpenAIInput {
     Write-Step "3/5 Prompt OPENAI_BASE_URL and OPENAI_API_KEY"
 
-    if ([string]::IsNullOrWhiteSpace($OpenAIBaseUrl)) {
+    if ([string]::IsNullOrWhiteSpace($script:OpenAIBaseUrl)) {
         $enteredBase = Read-Host "OPENAI_BASE_URL (Enter for default: $DefaultOpenAIBaseUrl)"
         if ([string]::IsNullOrWhiteSpace($enteredBase)) {
-            $OpenAIBaseUrl = $DefaultOpenAIBaseUrl
+            $script:OpenAIBaseUrl = $DefaultOpenAIBaseUrl
         } else {
-            $OpenAIBaseUrl = $enteredBase.Trim()
+            $script:OpenAIBaseUrl = $enteredBase.Trim()
         }
     }
 
-    if ([string]::IsNullOrWhiteSpace($OpenAIApiKey)) {
+    if ([string]::IsNullOrWhiteSpace($script:OpenAIApiKey)) {
         $secure = Read-Host "OPENAI_API_KEY" -AsSecureString
-        $OpenAIApiKey = Convert-SecureStringToPlainText -Secure $secure
+        $script:OpenAIApiKey = Convert-SecureStringToPlainText -Secure $secure
     }
 
     if ([string]::IsNullOrWhiteSpace($OpenAIApiKey)) {
@@ -237,7 +265,7 @@ wire_api = "responses"
 }
 
 function Mask-Secret([string]$Value) {
-    if ([string]::IsNullOrEmpty($Value)) {
+    if ($null -eq $Value -or $Value.Length -eq 0) {
         return ""
     }
     if ($Value.Length -le 8) {
@@ -249,17 +277,17 @@ function Mask-Secret([string]$Value) {
 function Print-Summary {
     Write-Step "5/5 Print install summary"
 
-    $nodeVersion = if (Command-Exists "node") { (node --version).Trim() } else { "not found" }
-    $npmVersion = if (Command-Exists "npm") { (npm --version).Trim() } else { "not found" }
-    $codexVersion = if (Command-Exists "codex") { (codex --version).Trim() } else { "not found" }
+    $nodeVersion = Get-CommandOutputText -CommandName "node" -Arguments @("--version")
+    $npmVersion = Get-CommandOutputText -CommandName "npm" -Arguments @("--version")
+    $codexVersion = Get-CommandOutputText -CommandName "codex" -Arguments @("--version")
 
     Write-Host ""
     Write-Host "Install Result"
     Write-Host "  node             : $nodeVersion"
     Write-Host "  npm              : $npmVersion"
     Write-Host "  codex            : $codexVersion"
-    Write-Host "  OPENAI_BASE_URL  : $OpenAIBaseUrl"
-    Write-Host "  OPENAI_API_KEY   : $(Mask-Secret $OpenAIApiKey)"
+    Write-Host "  OPENAI_BASE_URL  : $script:OpenAIBaseUrl"
+    Write-Host "  OPENAI_API_KEY   : $(Mask-Secret $script:OpenAIApiKey)"
     Write-Host "  auth.json        : $AuthFile"
     Write-Host "  config.toml      : $ConfigFile"
     Write-Host "  env script       : $EnvFile"
