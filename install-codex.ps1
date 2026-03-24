@@ -275,15 +275,15 @@ function Ensure-ScoopInstallExecutionPolicy {
 function Ensure-Scoop {
     if (Command-Exists "scoop") {
         Ensure-ScoopOnPath | Out-Null
-        return Get-ScoopCommandPath
+        return [string](Get-ScoopCommandPath)
     }
 
     Write-Info "Scoop not found. Installing Scoop..."
     Ensure-ScoopInstallExecutionPolicy
-    Invoke-RestMethod -Uri "https://get.scoop.sh" | Invoke-Expression
+    Invoke-Expression (Invoke-RestMethod -Uri "https://get.scoop.sh") | Out-Null
 
     Ensure-ScoopOnPath | Out-Null
-    $scoopCommand = Get-ScoopCommandPath
+    $scoopCommand = [string](Get-ScoopCommandPath)
     if ([string]::IsNullOrWhiteSpace($scoopCommand) -or (-not (Test-Path $scoopCommand))) {
         throw "Scoop installation failed. Could not find scoop command after installation."
     }
@@ -647,7 +647,10 @@ function Get-CodexStatus {
 function Install-NodeJs {
     Write-Step "1/5 Install Node.js"
 
-    $scoopCommand = Ensure-Scoop
+    $scoopCommand = @(
+        Ensure-Scoop | Where-Object { -not [string]::IsNullOrWhiteSpace("$_") }
+    ) | Select-Object -Last 1
+    $scoopCommand = [string]$scoopCommand
     $nodeOk = $false
 
     if (Test-NodeReadyFromScoop) {
