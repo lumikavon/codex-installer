@@ -56,11 +56,15 @@ function Get-NodeMajor {
     return 0
 }
 
+function Test-NodeReady {
+    return (Command-Exists "node") -and (Command-Exists "npm") -and ((Get-NodeMajor) -ge 18)
+}
+
 function Install-NodeJs {
     Write-Step "1/5 Install Node.js"
 
     $nodeOk = $false
-    if (Command-Exists "node" -and Command-Exists "npm") {
+    if ((Command-Exists "node") -and (Command-Exists "npm")) {
         $major = Get-NodeMajor
         if ($major -ge 18) {
             $nodeOk = $true
@@ -71,32 +75,53 @@ function Install-NodeJs {
     }
 
     if (-not $nodeOk) {
+        $attemptedManagers = @()
+
         if (Command-Exists "winget") {
-            Write-Info "Installing Node.js with winget"
-            & winget install --id OpenJS.NodeJS.LTS -e --accept-source-agreements --accept-package-agreements --silent
-            if ($LASTEXITCODE -ne 0) {
-                Write-Warn "winget returned non-zero exit code ($LASTEXITCODE). Will verify Node.js afterward."
+            $attemptedManagers += "winget"
+            Write-Info "Installing Node.js with winget (source: winget)"
+            & winget install --id OpenJS.NodeJS.LTS -e --source winget --accept-source-agreements --accept-package-agreements --silent
+            Refresh-Path
+            if (Test-NodeReady) {
+                $nodeOk = $true
             }
-        } elseif (Command-Exists "scoop") {
+            if ($LASTEXITCODE -ne 0) {
+                Write-Warn "winget returned non-zero exit code ($LASTEXITCODE). Trying other package managers if available."
+            }
+        }
+
+        if ((-not $nodeOk) -and (Command-Exists "scoop")) {
+            $attemptedManagers += "scoop"
             Write-Info "Installing Node.js with scoop"
             & scoop install nodejs-lts
-            if ($LASTEXITCODE -ne 0) {
-                throw "scoop installation failed."
+            Refresh-Path
+            if (Test-NodeReady) {
+                $nodeOk = $true
+            } elseif ($LASTEXITCODE -ne 0) {
+                Write-Warn "scoop installation failed (exit code $LASTEXITCODE)."
             }
-        } elseif (Command-Exists "choco") {
+        }
+
+        if ((-not $nodeOk) -and (Command-Exists "choco")) {
+            $attemptedManagers += "choco"
             Write-Info "Installing Node.js with chocolatey"
             & choco install -y nodejs-lts
-            if ($LASTEXITCODE -ne 0) {
-                throw "chocolatey installation failed."
+            Refresh-Path
+            if (Test-NodeReady) {
+                $nodeOk = $true
+            } elseif ($LASTEXITCODE -ne 0) {
+                Write-Warn "chocolatey installation failed (exit code $LASTEXITCODE)."
             }
-        } else {
+        }
+
+        if ($attemptedManagers.Count -eq 0) {
             throw "No supported package manager found (winget/scoop/choco). Install Node.js 18+ manually."
         }
     }
 
     Refresh-Path
 
-    if (-not (Command-Exists "node") -or -not (Command-Exists "npm")) {
+    if ((-not (Command-Exists "node")) -or (-not (Command-Exists "npm"))) {
         throw "Node.js/npm not found after installation."
     }
 
